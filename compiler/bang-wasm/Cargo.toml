@@ -1,0 +1,27 @@
+[package]
+name = "bang-wasm"
+version = "0.1.0"
+edition = "2021"
+description = "WASM binding for mindustry_logic_bang_lang: compile/decompile/format Bang <-> MLog in browsers"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+console_error_panic_hook = "0.1"
+tag_code = { path = "../tag_code", version = "*" }
+display_source = { path = "../display_source", version = "*" }
+parser = { path = "../parser", version = "*" }
+syntax = { path = "../syntax", version = "*" }
+logic_lint = { path = "../logic_lint", version = "*" }
+mini-paren = { version = "0.1.0", path = "../mini-paren" }
+line-column = "0.3.5"
+itertools = "0.14.0"
+linked-hash-map = "0.5.6"
+var_utils = { path = "../var_utils", version = "*" }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true

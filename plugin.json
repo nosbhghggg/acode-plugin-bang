@@ -1,0 +1,27 @@
+{
+  "$schema": "https://acode.app/schema/plugin/v0.1.0.json",
+  "id": "com.nosbhghggg.acode.bang",
+  "name": "Bang Language",
+  "main": "main.js",
+  "version": "0.0.1",
+  "readme": "readme.md",
+  "changelogs": "changelogs.md",
+  "repository": "https://github.com/nosbhghggg/acode-plugin-bang",
+  "icon": "icon.png",
+  "files": [],
+  "minVersionCode": 290,
+  "license": "GPL-3.0",
+  "keywords": [
+    "mindustry",
+    "bang",
+    "mlog",
+    "logic"
+  ],
+  "price": 0,
+  "permissions": [],
+  "author": {
+    "name": "nosbhghggg",
+    "email": "",
+    "github": "https://github.com/nosbhghggg"
+  }
+}
