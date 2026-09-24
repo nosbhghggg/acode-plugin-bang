@@ -1,0 +1,182 @@
+use std::iter;
+use rustc_hash::{FxHashMap, FxHashSet};
+
+use crate::decompiler::{Jump, Label, Reduce, make};
+
+pub fn dedup_labels(reduce: Reduce<'_>) -> Reduce<'_> {
+    let mut label_map = FxHashMap::default();
+    let reduce = quiet_unique_label_defs(reduce);
+
+    reduce.walk_reduce_slices(&mut |reduces| {
+        reduces.iter().reduce(|a, b| {
+            match (a, b) {
+                (lhs @ Reduce::Label(a), Reduce::Label(b)) => {
+                    label_map.insert(b.clone(), a.clone());
+                    lhs
+                },
+                _ => b,
+            }
+        });
+    });
+
+    make::remake_reduce(reduce, &mut |reduce| match reduce {
+        Reduce::Label(label) if label_map.contains_key(&label) => None,
+        Reduce::Jump(Jump(label, cond)) => {
+            let label = label_map.get(&label).cloned().unwrap_or(label);
+            Some(Reduce::Jump(Jump(label, cond)))
+        },
+        _ => Some(reduce)
+    }).unwrap()
+}
+
+pub fn quiet_unique_label_defs(reduce: Reduce<'_>) -> Reduce<'_> {
+    let mut dup_counter = FxHashMap::default();
+
+    reduce.walk_label_defs(&mut |l| {
+        let count: &mut usize = dup_counter.entry(l.clone()).or_default();
+        *count += 1;
+    });
+    make::remake_reduce(reduce, &mut |reduce| match reduce {
+        Reduce::Label(label) if dup_counter.get(&label).is_some_and(|&n| n > 1) => {
+            *dup_counter.get_mut(&label).unwrap() -= 1;
+            None
+        },
+        _ => Some(reduce),
+    }).unwrap()
+}
+
+pub fn unused_labels(reduce: Reduce<'_>) -> Reduce<'_> {
+    let mut labels = FxHashSet::default();
+
+    reduce.walk_label_usages(&mut |l| _ = labels.insert(l.clone()));
+
+    fn each<'a, C>(reduces: impl IntoIterator<Item = Reduce<'a>>, labels: &FxHashSet<Label>) -> C
+    where C: FromIterator<Reduce<'a>>
+    {
+        reduces.into_iter().filter_map(|reduce| match reduce {
+            Reduce::Label(label) if !labels.contains(&label) => None,
+            _ => Some(implement(reduce, labels)),
+        }).collect()
+    }
+
+    fn implement<'a>(reduce: Reduce<'a>, labels: &FxHashSet<Label>) -> Reduce<'a> {
+        match reduce {
+            Reduce::Pure(..) => reduce,
+            Reduce::Label(..) => reduce,
+            Reduce::Jump(..) => reduce,
+            Reduce::Break(..) => reduce,
+            Reduce::Product(reduces) => each(reduces, labels),
+            Reduce::Skip(cond, reduces) => {
+                Reduce::Skip(cond, each(reduces.iter().cloned(), labels))
+            },
+            Reduce::DoWhile(cond, reduces) => {
+                Reduce::DoWhile(cond, each(reduces.iter().cloned(), labels))
+            },
+            Reduce::While(cond, deps, reduces) => {
+                Reduce::While(cond,
+                              each(deps.iter().cloned(), labels),
+                              each(reduces.iter().cloned(), labels))
+            },
+            Reduce::IfElse(cond, then, else_br) => {
+                Reduce::IfElse(cond,
+                               each(then.iter().cloned(), labels),
+                               each(else_br.iter().cloned(), labels))
+            },
+            Reduce::GSwitch(var, cases) => {
+                let reduces = cases.iter().map(|(_, reduce)| reduce.clone());
+                let reduces = each::<Vec<_>>(reduces, labels);
+                let cases = cases.iter()
+                    .map(|(i, _)| *i).zip(reduces)
+                    .collect();
+                Reduce::GSwitch(var, cases)
+            },
+        }
+    }
+
+    implement(reduce, &labels)
+}
+
+pub fn jump_to_break(reduce: Reduce<'_>) -> Reduce<'_> {
+    #[derive(Debug, Clone)]
+    enum State {
+        Nothing,
+        Phi(Label),
+        LoopBinded(Label),
+    }
+
+    impl State {
+        fn bind(&self, peek: Option<&Reduce<'_>>) -> Self {
+            match (self, peek) {
+                (_, Some(Reduce::Label(label))) => Self::LoopBinded(label.to_owned()),
+                (Self::Phi(label), None) => Self::LoopBinded(label.to_owned()),
+                (Self::LoopBinded(_), _) => self.clone(),
+                _ => Self::Nothing,
+            }
+        }
+
+        fn phi(&self, peek: Option<&Reduce<'_>>) -> Self {
+            match (self, peek) {
+                (Self::LoopBinded(_), _) => self.clone(),
+                (Self::Phi(_), None) => self.clone(),
+                (_, Some(Reduce::Label(label))) => Self::Phi(label.to_owned()),
+                _ => Self::Nothing,
+            }
+        }
+
+        fn hit(&self, label: &Label) -> bool {
+            matches!(self, Self::LoopBinded(binded) if binded == label)
+        }
+    }
+
+    fn each<'a, C, I>(reduces: I, lab: State) -> C
+    where I: IntoIterator<Item = Reduce<'a>>,
+          C: FromIterator<Reduce<'a>>,
+    {
+        let mut iter = reduces.into_iter().peekable();
+        iter::from_fn(move || {
+            match iter.next()? {
+                it @ (Reduce::DoWhile(..) | Reduce::While(..) | Reduce::GSwitch(..)) => {
+                    implement(it, lab.bind(iter.peek()))
+                },
+                it => implement(it, lab.phi(iter.peek())),
+            }.into()
+        }).collect()
+    }
+    fn implement(reduce: Reduce<'_>, lab: State) -> Reduce<'_> {
+        match reduce {
+            Reduce::Pure(..) => reduce,
+            Reduce::Product(reduces) => each(reduces, lab),
+            Reduce::Jump(Jump(l, cond)) if lab.hit(&l) => {
+                Reduce::Break(cond)
+            },
+            Reduce::DoWhile(cond, sub) => {
+                Reduce::DoWhile(cond, each(sub.iter().cloned(), lab))
+            },
+            Reduce::While(cond, deps, sub) => {
+                let deps = each(deps.iter().cloned(), lab.clone());
+                let sub = each(sub.iter().cloned(), lab);
+                Reduce::While(cond, deps, sub)
+            },
+            Reduce::IfElse(cond, then, else_br) => {
+                let then = each(then.iter().cloned(), lab.clone());
+                let else_br = each(else_br.iter().cloned(), lab);
+                Reduce::IfElse(cond, then, else_br)
+            },
+            Reduce::Skip(cond, reduces) => {
+                Reduce::Skip(cond, each(reduces.iter().cloned(), lab))
+            },
+            Reduce::GSwitch(var, cases) => {
+                let reduces = cases.iter().map(|(_, reduce)| reduce.clone());
+                let reduces = each::<Vec<_>, _>(reduces, lab);
+                let cases = cases.iter()
+                    .map(|(i, _)| *i).zip(reduces)
+                    .collect();
+                Reduce::GSwitch(var, cases)
+            },
+            Reduce::Label(_) => reduce,
+            Reduce::Break(_) => reduce,
+            Reduce::Jump(_) => reduce,
+        }
+    }
+    implement(reduce, State::Nothing)
+}

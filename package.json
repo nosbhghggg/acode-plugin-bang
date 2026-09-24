@@ -1,0 +1,40 @@
+{
+  "name": "acode-plugin-bang",
+  "version": "0.0.1",
+  "description": "Bang (mindustry_logic_bang_lang) language support for Acode: highlight, completion, offline compiler, decompiler",
+  "main": "build/main.js",
+  "repository": "https://github.com/nosbhghggg/acode-plugin-bang",
+  "author": "nosbhghggg",
+  "license": "GPL-3.0",
+  "dependencies": {
+    "acode-plugin-types": "^1.12.9",
+    "@codemirror/autocomplete": "^6.20.3",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.5.4",
+    "@lezer/highlight": "^1.2.0",
+    "html-tag-js": "^2.4.15",
+    "brotli-wasm": "^3.0.1"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.2",
+    "jszip": "^3.10.1",
+    "typescript": "^5.9.3"
+  },
+  "scripts": {
+    "dev": "node esbuild.config.mjs --serve",
+    "typecheck": "tsc --noEmit",
+    "build:only": "node esbuild.config.mjs",
+    "build": "tsc --noEmit && node esbuild.config.mjs",
+    "vendor": "node tools/sync-vendor.mjs",
+    "gen:wasm": "node tools/gen-wasm-assets.mjs",
+    "sync:upstream": "node tools/sync-upstream.mjs",
+    "check:upstream": "node tools/sync-upstream.mjs --check",
+    "gen:snippets": "node tools/gen-snippets.mjs",
+    "gen:tm": "node tools/gen-tm-grammar.mjs",
+    "gen:upstream": "npm run sync:upstream && npm run gen:snippets && npm run gen:tm",
+    "upgrade:compiler": "node tools/upgrade-compiler.mjs",
+    "test": "node _test/all.cjs",
+    "decode-assets": "node tools/decode-assets.mjs"
+  },
+  "browserslist": "cover 100%,not android < 5"
+}

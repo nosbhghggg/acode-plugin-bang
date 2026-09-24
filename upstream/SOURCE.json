@@ -1,0 +1,53 @@
+{
+  "repository": "https://github.com/A4-Tacks/mindustry_logic_bang_lang",
+  "tag": "v0.22.6-7",
+  "commit": "a6739e9bf18fae408f704ca413d1d40f236df7fd",
+  "note": "本目录是上游产物的冻结快照，插件不修改上游任何源码。由 tools/sync-upstream.mjs 抓取并校验 sha256；上游发版后由 CI 定时任务或手动重跑该脚本更新。",
+  "files": [
+    {
+      "local": "mdtlbl.tmLanguage.json",
+      "source": "syntax/vscode/support/syntaxes/mdtlbl.tmLanguage.json",
+      "kind": "tmLanguage",
+      "sha256": "b4636f87485bc99b235096c98363e0cc0e5bee8629e0688b8e537ad8cfed3391",
+      "used_by": "tools/gen-tm-grammar.mjs → src/lang/bang-tm-tokens.generated.ts → src/lang/bang-mode.ts"
+    },
+    {
+      "local": "snippets.json",
+      "source": "syntax/vscode/support/snippets/snippets.json",
+      "kind": "snippets",
+      "sha256": "61fed9fce8c058abe96074115509ffb1c1877eb7b4b55092890eca4201b32dc4",
+      "used_by": "tools/gen-snippets.mjs → src/lang/bang-snippets.generated.ts → src/lang/bang-complete.ts"
+    },
+    {
+      "local": "language-configuration.json",
+      "source": "syntax/vscode/support/language-configuration.json",
+      "kind": "language-configuration",
+      "sha256": "e2b2f9a5b0d34854cc5f12a0086f8acb08d96d38a0d52520347c780ae56a0a26",
+      "used_by": "src/lang/bang-mode.ts（commentTokens / 括号 / 缩进，手抄为常量）"
+    }
+  ],
+  "binaries": {
+    "note": "上游 release 出 4 个二进制 × 6 平台，其中 aarch64-unknown-linux-musl 对应 Alpine。二进制不打包进插件（体积红线），仅在运行时探测或按需下载。",
+    "bins": [
+      "mindustry_logic_bang_lang",
+      "mdt-ops-generator",
+      "mlog-decompiler",
+      "bangls"
+    ],
+    "targets": [
+      "aarch64-unknown-linux-musl",
+      "aarch64-apple-darwin",
+      "x86_64-unknown-linux-musl",
+      "x86_64-apple-darwin",
+      "universal-apple-darwin",
+      "x86_64-pc-windows-gnu"
+    ],
+    "identityProbe": {
+      "argv": [
+        "-h"
+      ],
+      "match": "Mindustry logic extension meta-programming",
+      "version": "Version:\\s*(\\S+)"
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/A4-Tacks/mindustry_logic_bang_lang",
+  "tag": "v0.22.6-7",
+  "version": "0.22.6",
+  "note": "内置编译器的上游来源；CI 会按此 tag 构建 wasm，并由定时任务检测新版本"
+}

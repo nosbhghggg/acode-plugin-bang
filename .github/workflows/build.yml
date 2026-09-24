@@ -1,0 +1,186 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore: ["**.md"]
+  workflow_dispatch:
+    inputs:
+      upstream_tag:
+        description: "上游 bang lang tag（留空则用 compiler/upstream.json）"
+        required: false
+  repository_dispatch:
+    types: [upstream-released]
+  schedule:
+    # 每天 02:17 UTC 检查上游是否有新版本
+    - cron: "17 2 * * *"
+
+permissions:
+  contents: write
+
+# 同一时间只跑一个构建，避免并发推送
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---------- 检测上游新版本：有新 tag 就自动更新并触发构建 ----------
+  check-upstream:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.check.outputs.changed }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          LATEST=$(curl -sS https://api.github.com/repos/A4-Tacks/mindustry_logic_bang_lang/releases/latest | jq -r .tag_name)
+          CURRENT=$(jq -r .tag compiler/upstream.json)
+          echo "latest=$LATEST current=$CURRENT"
+          if [ -n "${{ github.event.inputs.upstream_tag }}" ]; then
+            WANT="${{ github.event.inputs.upstream_tag }}"
+          else
+            WANT="$LATEST"
+          fi
+          if [ "$WANT" != "$CURRENT" ]; then
+            VER=$(echo "$WANT" | sed -E 's/^v([0-9]+\.[0-9]+\.[0-9]+).*/\1/')
+            jq --arg t "$WANT" --arg v "$VER" '.tag=$t | .version=$v' compiler/upstream.json > tmp.json
+            mv tmp.json compiler/upstream.json
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add compiler/upstream.json
+            git commit -m "chore: 跟进上游 Bang 编译器 $WANT [skip ci]"
+            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "tag=$WANT" >> "$GITHUB_OUTPUT"
+
+  # ---------- 构建插件（含 wasm 编译器） ----------
+  build:
+    needs: [check-upstream]
+    if: |
+      always() && (
+        github.event_name == 'push' ||
+        github.event_name == 'workflow_dispatch' ||
+        github.event_name == 'repository_dispatch' ||
+        needs.check-upstream.outputs.changed == 'true'
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # 始终取 main 最新提交：check-upstream 可能刚提交了 upstream.json 更新
+          ref: main
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust + wasm32 目标
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: 安装 wasm-bindgen-cli（版本需与 Cargo.lock 一致）
+        run: |
+          cargo install wasm-bindgen-cli --version 0.2.128 --locked
+
+      - name: 克隆上游 bang lang（按 upstream.json 的 tag）
+        run: |
+          set -e
+          TAG=$(jq -r .tag compiler/upstream.json)
+          REPO=$(jq -r .repository compiler/upstream.json)
+          # 克隆到 upstream-src：仓库里的 upstream/ 是上游产物的冻结快照，不能覆盖
+          git clone --depth 1 --branch "$TAG" "$REPO" upstream-src
+          echo "上游版本：$TAG"
+
+      - name: 校验上游产物快照（tmLanguage / snippets / language-configuration）
+        run: |
+          set -e
+          UPSTREAM_DIR="$PWD/upstream-src" node tools/sync-upstream.mjs
+          node tools/sync-upstream.mjs --check
+
+      - name: 注入 bang-wasm 壳 crate 到上游 workspace
+        run: |
+          set -e
+          cp -r compiler/bang-wasm upstream-src/tools/bang-wasm
+          # 注册为 workspace 成员（幂等）
+          python3 - <<'PY'
+          import re, pathlib
+          p = pathlib.Path("upstream-src/Cargo.toml")
+          s = p.read_text(encoding="utf-8")
+          if '"./tools/bang-wasm"' not in s:
+              s = s.replace('    "./tools/bangls",', '    "./tools/bangls",\n    "./tools/bang-wasm",')
+              p.write_text(s, encoding="utf-8")
+              print("added workspace member")
+          else:
+              print("already member")
+          PY
+
+      - name: 编译 wasm
+        run: |
+          cd upstream-src
+          cargo build -p bang-wasm --target wasm32-unknown-unknown --release
+
+      - name: 生成 JS 胶水
+        run: |
+          mkdir -p src/wasm
+          wasm-bindgen upstream-src/target/wasm32-unknown-unknown/release/bang_wasm.wasm \
+            --out-dir src/wasm --target web
+
+      - name: 还原二进制资源（图标；仓库内以 base64 存储）
+        run: |
+          base64 -d assets/icon.png.b64 > icon.png
+          ls -la icon.png
+
+      - name: 安装依赖并同步 brotli 资源
+        run: |
+          npm ci
+          node tools/sync-vendor.mjs
+
+      - name: 生成内嵌 wasm 资源
+        run: node tools/gen-wasm-assets.mjs
+
+      - name: 由上游快照重新生成派生素材（代码片段 / 高亮词表）
+        run: |
+          node tools/gen-snippets.mjs
+          node tools/gen-tm-grammar.mjs
+
+      - name: 构建插件包
+        run: npm run build:only
+
+      - name: 回归测试（真实 CodeMirror 引擎）
+        run: node _test/all.cjs
+
+      - name: 读取版本号
+        id: meta
+        run: |
+          echo "version=$(jq -r .version plugin.json)" >> "$GITHUB_OUTPUT"
+          echo "upstream=$(jq -r .tag compiler/upstream.json)" >> "$GITHUB_OUTPUT"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-${{ steps.meta.outputs.version }}
+          path: plugin.zip
+
+      - name: 发布 Release
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}-${{ github.run_number }}
+          name: "v${{ steps.meta.outputs.version }} (bang ${{ steps.meta.outputs.upstream }})"
+          body: |
+            内置 Bang 编译器：${{ steps.meta.outputs.upstream }}
+            插件版本：${{ steps.meta.outputs.version }}
+
+            安装：将该 plugin.zip 通过 Acode 插件管理器本地安装即可。
+          files: plugin.zip

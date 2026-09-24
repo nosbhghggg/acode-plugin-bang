@@ -1,0 +1,32 @@
+node_modules/
+build/
+dist/
+plugin.zip
+upgrade.log
+npm_log.txt
+
+# 生成的编译器资源（由 CI / tools/upgrade-compiler.mjs 产出）
+src/wasm/bang_wasm.js
+src/wasm/bang_wasm.d.ts
+src/wasm/bang_wasm_bg.wasm
+src/wasm/bang_wasm_bg.wasm.d.ts
+src/generated/wasm-assets.ts
+
+# vendored 依赖（由 tools/sync-vendor.mjs 从 node_modules 复制）
+src/vendor/
+
+# 二进制图标由 assets/icon.png.b64 还原（tools/decode-assets.mjs）
+icon.png
+
+.DS_Store
+*.log
+
+# 官方编译器二进制与临时日志（不入库）
+bin/
+*.exe
+build_log.txt
+npm_log.txt
+upgrade.log
+
+# 本地构建产物
+*.zip
